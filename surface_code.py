@@ -2,6 +2,7 @@
 #
 # Makes a plot of logical failure rate p_L vs seam 2q error rate p_seam,
 # comparing multiple code distances on the same figure.
+# Also includes a "no seam / uniform noise" baseline curve for d=3.
 #
 # Requirements:
 #   pip install stim pymatching numpy matplotlib
@@ -10,7 +11,7 @@
 #   python sweep_seam_plot.py
 
 from __future__ import annotations
-import math
+
 import stim
 import numpy as np
 import pymatching
@@ -46,6 +47,10 @@ def add_seam_depolarize2_after_entangling_gates(
     x_cut: float = 0.0,
     entangling_gates: tuple[str, ...] = ("CX", "CZ"),
 ) -> stim.Circuit:
+    """
+    Copies circuit `c` and after each entangling gate appends DEPOLARIZE2(q1,q2,p_use),
+    where p_use = p_seam if the edge crosses the vertical seam x=x_cut, else p.
+    """
     coords = extract_qubit_coords(c)
 
     def is_seam_pair(q1: int, q2: int) -> bool:
@@ -64,8 +69,10 @@ def add_seam_depolarize2_after_entangling_gates(
                 out += stim.Circuit(f"REPEAT {inst.repeat_count} {{\n{body_processed}\n}}")
                 continue
 
+            # copy original instruction
             out.append(inst.name, inst.targets_copy(), inst.gate_args_copy())
 
+            # inject noise after entangling gates
             if inst.name in entangling_gates:
                 qubits = [int(t.value) for t in inst.targets_copy() if t.is_qubit_target]
                 if len(qubits) % 2 != 0:
@@ -117,14 +124,14 @@ def main() -> None:
     distances = [3, 5, 7]
 
     # Number of QEC rounds. Common choice: rounds ~ O(d)
-    # Increase this if you want "longer memory".
     rounds_factor = 3  # rounds = rounds_factor * d
 
-    # Baseline 2q depolarizing probability per entangling gate (non-seam)
-    p_base_2q = 1e-3
-
-    # Sweep seam 2q error probability
+    # Sweep seam 2q error probability (x-axis)
     p_seam_values = logspace(-4, -1, 11)  # 1e-4 ... 1e-1
+
+    # Baseline 2q depolarizing probability per entangling gate (non-seam).
+    # Here: vary baseline alongside sweep (your original choice).
+    p_base_2q = p_seam_values * 1e-1
 
     # Vertical seam location in generator coordinates
     x_cut = 0.0
@@ -132,8 +139,8 @@ def main() -> None:
     # Monte Carlo shots per point
     shots = 20_000
 
-    # Optional "target" logical error rate line (like your professor drew)
-    target_pL = 1e-3  # change to whatever you want (e.g. 1e-6, 1e-12, ...)
+    # Optional "target" logical error rate line
+    target_pL = 1e-3
 
     # Random seed base (keeps runs reproducible-ish)
     seed0 = 123
@@ -141,40 +148,86 @@ def main() -> None:
     # -----------------------------
     # Run sweep
     # -----------------------------
-    results: dict[int, list[float]] = {}
+    # store multiple curves by string key so we can include extra baselines
+    results: dict[str, list[float]] = {}
 
     for d in distances:
         r = rounds_factor * d
         base = stim.Circuit.generated(task, distance=d, rounds=r)
-        y = []
+
+        # (A) Seam curve: p_seam on seam edges, p_base_2q off seam
+        y_seam: list[float] = []
         for i, p_seam in enumerate(p_seam_values):
             noisy = add_seam_depolarize2_after_entangling_gates(
                 base,
-                p=p_base_2q,
+                p=float(p_base_2q[i]),
                 p_seam=float(p_seam),
                 x_cut=x_cut,
                 entangling_gates=("CX", "CZ"),
             )
-            pL = logical_failure_rate_with_pymatching(noisy, shots=shots, seed=seed0 + 1000 * d + i)
-            y.append(pL)
-            print(f"d={d:2d} rounds={r:2d} p_seam={p_seam:.2e} -> pL={pL:.3e}")
-        results[d] = y
+            pL = logical_failure_rate_with_pymatching(
+                noisy,
+                shots=shots,
+                seed=seed0 + 1000 * d + i,
+            )
+            y_seam.append(pL)
+            print(
+                f"[SEAM ] d={d:2d} rounds={r:2d} p_seam={p_seam:.2e} "
+                f"p_base={p_base_2q[i]:.2e} -> pL={pL:.3e}"
+            )
+
+        results[f"seam_d{d}"] = y_seam
+
+        # (B) No-seam / uniform-noise baseline for d=3:
+        # set p_seam == p everywhere, so there is effectively no seam.
+        if d == 3:
+            y_uniform: list[float] = []
+            for i, p2q in enumerate(p_base_2q):
+                uniform = add_seam_depolarize2_after_entangling_gates(
+                    base,
+                    p=float(p2q),
+                    p_seam=float(p2q),
+                    x_cut=x_cut,
+                    entangling_gates=("CX", "CZ"),
+                )
+                pL = logical_failure_rate_with_pymatching(
+                    uniform,
+                    shots=shots,
+                    seed=seed0 + 9999 + i,
+                )
+                y_uniform.append(pL)
+                print(f"[UNIF ] d= 3 rounds={r:2d} p2q={p2q:.2e} -> pL={pL:.3e}")
+
+            results["uniform_d3"] = y_uniform
 
     # -----------------------------
     # Plot
     # -----------------------------
     plt.figure()
-    for d in distances:
-        plt.plot(p_seam_values, results[d], marker="o", label=f"d={d} (rounds={rounds_factor*d})")
 
-    # Target line
+    for d in distances:
+        plt.plot(
+            p_seam_values,
+            results[f"seam_d{d}"],
+            marker="o",
+            label=f"seam: d={d} (rounds={rounds_factor*d})",
+        )
+
+    if "uniform_d3" in results:
+        plt.plot(
+            p_seam_values,
+            results["uniform_d3"],
+            marker="s",
+            linestyle="-",
+            label=f"no seam (uniform): d=3 (rounds={rounds_factor*3})",
+        )
+
     plt.axhline(target_pL, linestyle="--", label=f"target pL={target_pL:g}")
 
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Seam 2-qubit error rate $p_{\\mathrm{seam}}$")
     plt.ylabel("Logical failure rate $p_L$")
-    plt.title(f"{task} with baseline 2q error p={p_base_2q:g}, seam at x={x_cut:g}")
     plt.legend()
     plt.grid(True, which="both", linestyle=":", linewidth=0.7)
     plt.tight_layout()
