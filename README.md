@@ -12,7 +12,6 @@ This repository contains Python code and a companion notebook for exploring surf
 |   |-- pqubit_error_model.py
 |   `-- qubit_topology.py
 |-- usage.ipynb
-|-- output.png
 `-- README.md
 ```
 
@@ -23,7 +22,7 @@ This repository contains Python code and a companion notebook for exploring surf
 - `src/pqubit.py`: Implements a physical-qubit abstraction used throughout the codebase.
 - `src/pqubit_error_model.py`: Stores per-qubit error parameters.
 - `usage.ipynb`: Main notebook for experimenting with the model and generating plots/results.
-- `output.png`: Example generated output from the notebook workflow.
+
 
 ## Requirements
 
@@ -35,7 +34,6 @@ The notebook imports the following Python packages:
 - `matplotlib`
 - `scipy`
 
-A recent Python 3 version is recommended.
 
 ## Setup
 
@@ -63,11 +61,4 @@ jupyter notebook usage.ipynb
 
 The notebook demonstrates how to construct and analyze surface-code patches using the modules in `src/`.
 
-## Notes
 
-- The source package currently lives in `src/` and is imported directly from the notebook.
-- `__pycache__` files may be generated after running the code locally.
-
-## License
-
-No license file is currently included in this repository. Add one if you plan to share or publish the project.
